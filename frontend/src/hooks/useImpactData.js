@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { buildStats, computeImpactScores, topN } from '../lib/scoring'
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API = (import.meta.env.VITE_API_URL || 'http://localhost:8000').trim()
 const REVIEW_SAMPLE = 40
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
