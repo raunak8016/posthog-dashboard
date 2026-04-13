@@ -24,30 +24,30 @@ async function fetchReviewsMap(prs) {
   const map = {}
   const sampleSize = Math.min(REVIEW_SAMPLE, prs.length)
   const sample = prs.slice(0, sampleSize)
-  const concurrency = Number(import.meta.env.VITE_REVIEW_CONCURRENCY) || 5
 
-  // simple worker queue using JS single-threaded shift()
-  const queue = sample.slice()
-  const workers = Array.from({ length: concurrency }, async () => {
-    while (queue.length) {
-      const pr = queue.shift()
-      try {
-        const r = await fetch(`${API}/api/reviews/${pr.number}`)
-        if (!r.ok) continue
-        const reviews = await r.json()
-        for (const rev of reviews) {
-          const login = rev.user?.login
-          if (!login || /bot/i.test(login)) continue
-          map[login] = (map[login] || 0) + 1
-          if (rev.body?.length > 50) map[login] += 0.5
-        }
-      } catch (err) {
-        // ignore per-PR errors
+  // Use backend batch endpoint to fetch all reviews for sampled PRs in one request
+  try {
+    const prNumbers = sample.map(p => p.number)
+    const r = await fetch(`${API}/api/reviews/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(prNumbers),
+    })
+    if (!r.ok) return { map, totalReviews: 0 }
+    const batch = await r.json()
+
+    for (const prNumStr of Object.keys(batch)) {
+      const reviews = batch[prNumStr] || []
+      for (const rev of reviews) {
+        const login = rev.user?.login
+        if (!login || /bot/i.test(login)) continue
+        map[login] = (map[login] || 0) + 1
+        if (rev.body?.length > 50) map[login] += 0.5
       }
     }
-  })
-
-  await Promise.all(workers)
+  } catch (err) {
+    return { map, totalReviews: 0 }
+  }
 
   const totalReviews = Object.values(map).reduce((a, b) => a + b, 0)
   return { map, totalReviews }
