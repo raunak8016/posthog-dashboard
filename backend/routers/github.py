@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from backend.services.github_client import get_pulls, get_reviews
+from services.github_client import get_pulls, get_reviews
 
 router = APIRouter(prefix="/api")
 
