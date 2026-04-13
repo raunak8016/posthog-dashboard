@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { buildStats, computeImpactScores, topN } from '../lib/scoring'
 
 const API = (import.meta.env.VITE_API_URL || 'http://localhost:8000').trim()
-const REVIEW_SAMPLE = 40
+const REVIEW_SAMPLE = Number(import.meta.env.VITE_REVIEW_SAMPLE) || 20
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
 
@@ -16,27 +16,41 @@ async function fetchAllPRs(since) {
     const filtered = data.filter(p => p.merged_at && new Date(p.merged_at) >= since)
     prs = prs.concat(filtered)
     if (filtered.length < data.length) break
-    await sleep(100)
   }
   return prs
 }
 
 async function fetchReviewsMap(prs) {
   const map = {}
-  const sample = prs.slice(0, REVIEW_SAMPLE)
-  for (const pr of sample) {
-    const r = await fetch(`${API}/api/reviews/${pr.number}`)
-    if (!r.ok) continue
-    const reviews = await r.json()
-    for (const rev of reviews) {
-      const login = rev.user?.login
-      if (!login || /bot/i.test(login)) continue
-      map[login] = (map[login] || 0) + 1
-      if (rev.body?.length > 50) map[login] += 0.5
+  const sampleSize = Math.min(REVIEW_SAMPLE, prs.length)
+  const sample = prs.slice(0, sampleSize)
+  const concurrency = Number(import.meta.env.VITE_REVIEW_CONCURRENCY) || 5
+
+  // simple worker queue using JS single-threaded shift()
+  const queue = sample.slice()
+  const workers = Array.from({ length: concurrency }, async () => {
+    while (queue.length) {
+      const pr = queue.shift()
+      try {
+        const r = await fetch(`${API}/api/reviews/${pr.number}`)
+        if (!r.ok) continue
+        const reviews = await r.json()
+        for (const rev of reviews) {
+          const login = rev.user?.login
+          if (!login || /bot/i.test(login)) continue
+          map[login] = (map[login] || 0) + 1
+          if (rev.body?.length > 50) map[login] += 0.5
+        }
+      } catch (err) {
+        // ignore per-PR errors
+      }
     }
-    await sleep(80)
-  }
-  return { map, totalReviews: sample.reduce((a, _) => a, 0) }
+  })
+
+  await Promise.all(workers)
+
+  const totalReviews = Object.values(map).reduce((a, b) => a + b, 0)
+  return { map, totalReviews }
 }
 
 export function useImpactData() {
